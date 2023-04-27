@@ -2,7 +2,7 @@ use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
 use tera::{Context, Function, Result, Tera,Filter};
 use std::{collections::HashMap, sync::Arc};
-use serde_json::Value;
+pub use serde_json::Value;
 pub use tokio::{self};
 
 type TeraFunctionMap = HashMap<String,Arc<dyn Function + 'static>>;
