@@ -15,3 +15,5 @@ fn main() {
 
 ````
 
+More details about how to use the template engine can be seen on the home page of [Tera](https://tera.netlify.app/docs/).
+
