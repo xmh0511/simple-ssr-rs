@@ -183,7 +183,7 @@ fn generate_include(tera: Tera) -> impl Function {
 #[macro_export]
 macro_rules! ssr_work {
 	($e:expr) => {
-		tokio::runtime::Builder::new_multi_thread()
+		$crate::tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
