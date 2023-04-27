@@ -1,19 +1,41 @@
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
-use tera::{Context, Function, Result, Tera};
-use std::collections::HashMap;
+use tera::{Context, Function, Result, Tera,Filter};
+use std::{collections::HashMap, sync::Arc};
 use serde_json::Value;
+
+type TeraFunctionMap = HashMap<String,Arc<dyn Function + 'static>>;
+type TeraFilterMap = HashMap<String,Arc<dyn Filter + 'static>>;
+
+struct CallableObjectForTera<F:?Sized>(Arc<F>);
+
+impl<F:Function + ?Sized> Function for CallableObjectForTera<F>{
+    fn call(&self, args: &HashMap<String, Value>) -> Result<Value> {
+        self.0.call(args)
+    }
+}
+
+impl<F:Filter + ?Sized> Filter for CallableObjectForTera<F>{
+    fn filter(&self, value: &Value, args: &HashMap<String, Value>) -> Result<Value> {
+        self.0.filter(value, args)
+    }
+}
+
 pub struct SSRender{
 	pub_assets_dir_name:String,
 	tmpl_dir_name:String,
-	host:String
+	host:String,
+	tmpl_func_map: TeraFunctionMap,
+	tmpl_filter_map:TeraFilterMap
 }
 impl SSRender{
 	pub fn new(host:&str)->Self {
 		Self{
 			pub_assets_dir_name: "public".to_owned(),
 			tmpl_dir_name: "templates".to_owned(),
-			host:host.to_owned()
+			host:host.to_owned(),
+			tmpl_func_map:HashMap::new(),
+			tmpl_filter_map:HashMap::new(),
 		}
 	}
 
@@ -27,6 +49,18 @@ impl SSRender{
 
 	pub fn set_tmpl_dir_name(& mut self,path:&str){
 		self.tmpl_dir_name =  path.to_owned();
+	}
+
+	pub fn register_function<F:Function + 'static>(& mut self, k:String, f:F){
+		self.tmpl_func_map.insert(k, Arc::new(f));
+	}
+
+	pub fn rm_registed_function(& mut self, k:String){
+		self.tmpl_func_map.remove(&k);
+	}
+
+	pub fn registed_function(&self)-> &TeraFunctionMap{
+		&self.tmpl_func_map
 	}
 
 	pub fn pub_dir_name(&self)->&str{
@@ -43,7 +77,7 @@ impl SSRender{
 				.with_defaults("index.html")
 				.with_listing(true),
 		);
-		let view_router = Router::with_path("/<**rest_path>").get(ViewHandler::new(format!("{}/**/*",self.tmpl_dir_name)));
+		let view_router = Router::with_path("/<**rest_path>").get(ViewHandler::new(format!("{}/**/*",self.tmpl_dir_name),self.tmpl_func_map.clone(),self.tmpl_filter_map.clone()));
 		let router = Router::new().push(pub_assets_router);
 		let router = router.push(view_router);
 		Server::new(TcpListener::bind(&self.host)).serve(router).await
@@ -51,12 +85,24 @@ impl SSRender{
 }
 
 struct ViewHandler{
-	dir_path:String
+	dir_path:String,
+	tmpl_func_map: TeraFunctionMap,
+	tmpl_filter_map:TeraFilterMap
 }
 impl ViewHandler{
-	fn new(v:String)->Self{
+	fn new(v:String, tmp_func:TeraFunctionMap,filter_map:TeraFilterMap)->Self{
 		Self{
-			dir_path:v
+			dir_path:v,
+			tmpl_func_map:tmp_func,
+			tmpl_filter_map:filter_map
+		}
+	}
+	fn register_with_tera(&self, tera:& mut Tera){
+		for (k, v) in &self.tmpl_func_map{
+			tera.register_function(k, CallableObjectForTera(Arc::clone(v)));
+		}
+		for (k, v) in &self.tmpl_filter_map{
+			tera.register_filter(k, CallableObjectForTera(Arc::clone(v)));
 		}
 	}
 }
@@ -76,6 +122,7 @@ impl ViewHandler{
 					let v = serde_json::from_str::<Value>(v)?;
 					Ok(v)
 				});
+				self.register_with_tera(& mut tera);
 				match tera.render(if path.is_empty(){"index.html"}else{&path}, &Context::default()) {
 					Ok(s) => {
 						res.render(Text::Html(s));
