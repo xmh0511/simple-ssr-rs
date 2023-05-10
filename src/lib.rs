@@ -156,7 +156,7 @@ impl ViewHandler {
 impl ViewHandler {
     async fn handle(&self, req: &mut Request, _depot: &mut Depot, res: &mut Response) {
         let Some(path) = req.param::<String>("**rest_path") else{
-			res.set_status_code(StatusCode::BAD_REQUEST);
+			res.status_code(StatusCode::BAD_REQUEST);
 			res.render(Text::Plain("invalid request path"));
 			return;
 		};
@@ -183,13 +183,13 @@ impl ViewHandler {
                         res.render(Text::Html(s));
                     }
                     Err(e) => {
-                        res.set_status_code(StatusCode::BAD_REQUEST);
+                        res.status_code(StatusCode::BAD_REQUEST);
                         res.render(Text::Plain(format!("{e:?}")));
                     }
                 }
             }
             Err(e) => {
-                res.set_status_code(StatusCode::BAD_REQUEST);
+                res.status_code(StatusCode::BAD_REQUEST);
                 res.render(Text::Plain(format!("{e:?}")));
             }
         }
