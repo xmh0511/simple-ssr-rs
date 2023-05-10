@@ -1,8 +1,9 @@
+pub use salvo;
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
-pub use serde_json::Value;
+pub use serde_json::{self,Value};
 use std::{collections::HashMap, sync::Arc};
-use tera::{Context, Filter, Function, Result, Tera};
+pub use tera::{self,Context, Filter, Function, Result, Tera};
 pub use tokio::{self};
 
 type TeraFunctionMap = HashMap<String, Arc<dyn Function + 'static>>;
@@ -90,8 +91,8 @@ impl SSRender {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
                 StaticDir::new([&self.pub_assets_dir_name])
-                    .with_defaults("index.html")
-                    .with_listing(true),
+                    .defaults("index.html")
+                    .listing(true),
             );
         let view_router = Router::with_path("/<**rest_path>").get(ViewHandler::new(
             format!("{}/**/*", self.tmpl_dir_name),
@@ -101,7 +102,8 @@ impl SSRender {
         ));
         let router = Router::new().push(pub_assets_router);
         let router = router.push(view_router);
-        Server::new(TcpListener::bind(&self.host))
+        let acceptor = TcpListener::new(&self.host).bind().await;
+        Server::new(acceptor)
             .serve(router)
             .await
     }
