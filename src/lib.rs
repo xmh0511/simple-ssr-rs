@@ -162,7 +162,8 @@ impl ViewHandler {
 		};
         match Tera::new(&self.dir_path) {
             Ok(mut tera) => {
-                tera.register_function("include_file", generate_include(tera.clone()));
+				let context = self.gen_context(req);
+				self.register_with_tera(&mut tera);
                 tera.register_filter(
                     "json_decode",
                     |v: &Value, _args: &HashMap<String, Value>| -> Result<Value> {
@@ -173,8 +174,7 @@ impl ViewHandler {
                         Ok(v)
                     },
                 );
-                self.register_with_tera(&mut tera);
-				let context = self.gen_context(req);
+				tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
                 match tera.render(
                     if path.is_empty() { "index.html" } else { &path },
                     &context,
@@ -196,7 +196,7 @@ impl ViewHandler {
     }
 }
 
-fn generate_include(tera: Tera) -> impl Function {
+fn generate_include(tera: Tera, parent:Context) -> impl Function {
     move |args: &HashMap<String, Value>| -> Result<Value> {
         let Some(file_path) = args.get("path") else{
             return Err(tera::Error::msg("file does not exist in the template path"));
@@ -208,7 +208,8 @@ fn generate_include(tera: Tera) -> impl Function {
                     .as_str()
                     .ok_or(tera::Error::msg("context must be a json object string"))?;
                 let v = serde_json::from_str::<Value>(context_value)?;
-                let context = Context::from_value(serde_json::json!({ "context": v }))?;
+                let mut context = Context::from_value(serde_json::json!({ "context": v }))?;
+				context.insert("parent", &parent.clone().into_json());
                 let r = tera
                     .render(
                         file_path
@@ -220,7 +221,8 @@ fn generate_include(tera: Tera) -> impl Function {
                 return Ok(Value::String(r));
             }
             None => {
-                let context = Context::from_value(serde_json::json!({ "context": Value::Null }))?;
+                let mut context = Context::from_value(serde_json::json!({ "context": Value::Null }))?;
+				context.insert("parent", &parent.clone().into_json());
                 let r = tera
                     .render(
                         file_path
