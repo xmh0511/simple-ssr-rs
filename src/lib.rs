@@ -210,7 +210,7 @@ fn generate_include(tera: Tera, parent:Context) -> impl Function {
                 let v = serde_json::from_str::<Value>(context_value)?;
                 let mut context = Context::from_value(serde_json::json!({ "context": v }))?;
                 let mut tera = tera.clone();
-				context.insert("$Parent", &parent.clone().into_json());
+				context.insert("__Parent", &parent.clone().into_json());
                 tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
                 let r = tera
                     .render(
@@ -225,7 +225,7 @@ fn generate_include(tera: Tera, parent:Context) -> impl Function {
             None => {
                 let mut context = Context::from_value(serde_json::json!({ "context": Value::Null }))?;
                 let mut tera = tera.clone();
-				context.insert("$Parent", &parent.clone().into_json());
+				context.insert("__Parent", &parent.clone().into_json());
                 tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
                 let r = tera
                     .render(
