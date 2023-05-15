@@ -209,7 +209,9 @@ fn generate_include(tera: Tera, parent:Context) -> impl Function {
                     .ok_or(tera::Error::msg("context must be a json object string"))?;
                 let v = serde_json::from_str::<Value>(context_value)?;
                 let mut context = Context::from_value(serde_json::json!({ "context": v }))?;
+                let mut tera = tera.clone();
 				context.insert("parent", &parent.clone().into_json());
+                tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
                 let r = tera
                     .render(
                         file_path
