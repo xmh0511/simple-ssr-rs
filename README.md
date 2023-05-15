@@ -11,6 +11,11 @@ fn main() {
 	  let r = v.get("value").ok_or("none")?.as_str().ok_or("none")?;
 	  Ok(Value::String(format!("<p>{r}</p><br/>")))
    });
+   ssr.set_meta_info_collector(|_req:&Request|->HashMap<String, Value>{  // collect infomation from the current request, these objects can be used in the templates
+      let mut map = HashMap::new();
+      map.insert("info".to_owned(), Value::Bool(true));
+      map
+   });
    ssr_work!(ssr);
 }
 
@@ -19,10 +24,11 @@ fn main() {
 #### Use built-in function
 ````html
 <!-- 
-	abc.html in the common directory
+	/pages/common/abc.html
 	<h3>{{context.title}}</h3>
+   <div>{{parent.info}}</div>  we can access the variable in the parent(if any), and so forth, parent...parent.info 
 -->
-<!-- the common directory is in the same level path with the following HTML file -->
+<!-- the common directory is in root path `pages` -->
 <div>
 	{{ include_file(path="common/abc.html"), context=`{"title":"abc"}` | safe }}
 </div>

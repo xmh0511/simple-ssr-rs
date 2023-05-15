@@ -224,7 +224,9 @@ fn generate_include(tera: Tera, parent:Context) -> impl Function {
             }
             None => {
                 let mut context = Context::from_value(serde_json::json!({ "context": Value::Null }))?;
+                let mut tera = tera.clone();
 				context.insert("parent", &parent.clone().into_json());
+                tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
                 let r = tera
                     .render(
                         file_path
