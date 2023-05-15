@@ -26,9 +26,9 @@ fn main() {
 <!-- 
 	/pages/common/abc.html
 	<h3>{{context.title}}</h3>
-   <div>{{parent.info}}</div>  we can access the variable in the parent(if any), and so forth, parent...parent.info 
+   <div>{{parent.info}}</div>  we can access the variable in the parent scope by using __Parent.info(if any), and so forth, __Parent...__Parent.info 
 -->
-<!-- the common directory is in root path `pages` -->
+<!-- the common directory is in the root path `pages` -->
 <div>
 	{{ include_file(path="common/abc.html"), context=`{"title":"abc"}` | safe }}
 </div>
