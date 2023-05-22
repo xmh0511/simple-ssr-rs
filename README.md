@@ -2,6 +2,30 @@
 use std::collections::HashMap;
 
 use simple_ssr_rs::{SSRender,ssr_work,Value};
+
+use simple_ssr_rs::salvo::{self,prelude::*};
+
+// Extend router
+struct Hello(TeraBuilder);
+#[handler]
+impl Hello{
+  async fn handle(&self, req: &mut Request, _depot: &mut Depot, res: &mut Response){
+      //let mut ctx = Context::default();
+      // let ctx = self.0.gen_context(req);
+      // match self.0.build(ctx.clone()){
+      //   Ok((tera,ctx))=>{
+      //     let r = tera.render("index.html", &ctx).unwrap_or("".to_owned());
+      //     let _ = res.add_header("server", "xfinal", true);
+      //     res.render(Text::Html(r));
+      //   }
+      //   Err(_)=>{
+      //     res.render(Text::Plain("Error"));
+      //   }
+      // }
+      res.render(Text::Plain("Hello"));
+  }
+}
+
 fn main() {
    let mut ssr = SSRender::new("0.0.0.0:8080");
    ssr.set_pub_dir_name("assets");  // specify the name of the public assets directory in the current root directory
@@ -16,6 +40,8 @@ fn main() {
       map.insert("info".to_owned(), Value::Bool(true));
       map
    });
+   //let router = Router::with_path("hello").get(Archive(ssr.gen_tera_builder()));
+   // ssr_work!(ssr,router);
    ssr_work!(ssr);
 }
 
