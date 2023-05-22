@@ -288,7 +288,7 @@ macro_rules! ssr_work {
             .build()
             .unwrap()
             .block_on(async {
-                $e.serve($router).await;
+                $e.serve(Some($router)).await;
             });
     };
     ($e:expr)=>{
