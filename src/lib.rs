@@ -5,6 +5,7 @@ pub use serde_json::{self,Value};
 use std::{collections::HashMap, sync::Arc};
 pub use tera::{self,Context, Filter, Function, Result, Tera};
 pub use tokio::{self};
+use std::cell::RefCell;
 
 type TeraFunctionMap = HashMap<String, Arc<dyn Function + 'static>>;
 type TeraFilterMap = HashMap<String, Arc<dyn Filter + 'static>>;
@@ -31,6 +32,7 @@ pub struct SSRender {
     tmpl_func_map: TeraFunctionMap,
     tmpl_filter_map: TeraFilterMap,
     request_meta_info_collector: MetaInfoCollector,
+	extend_router:Option<RefCell<Option<Router>>>
 }
 impl SSRender {
     pub fn new(host: &str) -> Self {
@@ -41,6 +43,7 @@ impl SSRender {
             tmpl_func_map: HashMap::new(),
             tmpl_filter_map: HashMap::new(),
             request_meta_info_collector: None,
+			extend_router:None
         }
     }
 
@@ -87,6 +90,14 @@ impl SSRender {
 		self.request_meta_info_collector = None;
 	}
 
+	pub fn extend_router(& mut self, router:Router){
+		self.extend_router = Some(RefCell::new(Some(router)));
+	}
+	
+	pub fn rm_extend_router(& mut self){
+		self.extend_router = None;
+	}
+
     pub async fn serve(&self) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
@@ -102,6 +113,22 @@ impl SSRender {
         ));
         let router = Router::new().push(pub_assets_router);
         let router = router.push(view_router);
+		let extend_router = match self.extend_router{
+			Some(ref cell)=>{
+				cell.borrow_mut().take()
+			}
+			None=>{
+				None
+			}
+		};
+		let router = match extend_router{
+			Some(r)=>{
+				router.push(r)
+			}
+			None=>{
+				router
+			}
+		};
         let acceptor = TcpListener::new(&self.host).bind().await;
         Server::new(acceptor)
             .serve(router)
