@@ -160,7 +160,7 @@ impl TeraBuilder {
         }
     }
 
-    pub fn build(&self, ctx: Context) -> tera::Result<Tera> {
+    pub fn build(&self, ctx: Context) -> tera::Result<(Tera,Context)> {
         let mut tera = Tera::new(&self.tpl_dir)?;
         self.register_utilities(&mut tera);
         tera.register_filter(
@@ -173,8 +173,8 @@ impl TeraBuilder {
                 Ok(v)
             },
         );
-        tera.register_function("include_file", generate_include(tera.clone(), ctx));
-        Ok(tera)
+        tera.register_function("include_file", generate_include(tera.clone(), ctx.clone()));
+        Ok((tera,ctx))
     }
 
     pub fn gen_context(&self, req: &Request) -> Context {
@@ -209,7 +209,7 @@ impl ViewHandler {
 		};
         let ctx = self.tera_builder.gen_context(req);
         match self.tera_builder.build(ctx.clone()) {
-            Ok(tera) => {
+            Ok((tera,ctx)) => {
                 match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
                     Ok(s) => {
                         res.render(Text::Html(s));
