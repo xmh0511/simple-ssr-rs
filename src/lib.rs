@@ -282,13 +282,22 @@ fn generate_include(tera: Tera, parent: Context) -> impl Function {
 
 #[macro_export]
 macro_rules! ssr_work {
-    ($e:expr) => {
+    ($e:expr, $router:expr) => {
         $crate::tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
-                $e.serve().await;
+                $e.serve($router).await;
             });
     };
+    ($e:expr)=>{
+        $crate::tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            $e.serve(None).await;
+        });
+    }
 }
