@@ -11,7 +11,7 @@ fn main() {
 	  let r = v.get("value").ok_or("none")?.as_str().ok_or("none")?;
 	  Ok(Value::String(format!("<p>{r}</p><br/>")))
    });
-   ssr.set_meta_info_collector(|_req:&Request|->HashMap<String, Value>{  // collect infomation from the current request, these objects can be used in the templates
+   ssr.set_ctx_generator(|_req:&Request|->HashMap<String, Value>{  // collect infomation from the current request, these objects can be used in the templates
       let mut map = HashMap::new();
       map.insert("info".to_owned(), Value::Bool(true));
       map

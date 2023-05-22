@@ -1,11 +1,10 @@
 pub use salvo;
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
-pub use serde_json::{self,Value};
+pub use serde_json::{self, Value};
 use std::{collections::HashMap, sync::Arc};
-pub use tera::{self,Context, Filter, Function, Result, Tera};
+pub use tera::{self, Context, Filter, Function, Result, Tera};
 pub use tokio::{self};
-use std::cell::RefCell;
 
 type TeraFunctionMap = HashMap<String, Arc<dyn Function + 'static>>;
 type TeraFilterMap = HashMap<String, Arc<dyn Filter + 'static>>;
@@ -31,8 +30,7 @@ pub struct SSRender {
     host: String,
     tmpl_func_map: TeraFunctionMap,
     tmpl_filter_map: TeraFilterMap,
-    request_meta_info_collector: MetaInfoCollector,
-	extend_router:Option<RefCell<Option<Router>>>
+    ctx_generator: MetaInfoCollector,
 }
 impl SSRender {
     pub fn new(host: &str) -> Self {
@@ -42,8 +40,7 @@ impl SSRender {
             host: host.to_owned(),
             tmpl_func_map: HashMap::new(),
             tmpl_filter_map: HashMap::new(),
-            request_meta_info_collector: None,
-			extend_router:None
+            ctx_generator: None,
         }
     }
 
@@ -67,8 +64,20 @@ impl SSRender {
         self.tmpl_func_map.remove(&k);
     }
 
-    pub fn registed_function(&self) -> &TeraFunctionMap {
+    pub fn registed_functions(&self) -> &TeraFunctionMap {
         &self.tmpl_func_map
+    }
+
+    pub fn register_filter<F: Filter + 'static>(&mut self, k: String, f: F) {
+        self.tmpl_filter_map.insert(k, Arc::new(f));
+    }
+
+    pub fn rm_registed_filter(&mut self, k: String) {
+        self.tmpl_filter_map.remove(&k);
+    }
+
+    pub fn registed_filters(&self) -> &TeraFilterMap {
+        &self.tmpl_filter_map
     }
 
     pub fn pub_dir_name(&self) -> &str {
@@ -79,104 +88,115 @@ impl SSRender {
         &self.tmpl_dir_name
     }
 
-    pub fn set_meta_info_collector(
+    pub fn set_ctx_generator(
         &mut self,
         f: impl Fn(&Request) -> HashMap<String, Value> + 'static + Send + Sync,
     ) {
-        self.request_meta_info_collector = Some(Arc::new(f));
+        self.ctx_generator = Some(Arc::new(f));
     }
 
-	pub fn rm_meta_info_collector(& mut self){
-		self.request_meta_info_collector = None;
-	}
+    pub fn rm_meta_info_collector(&mut self) {
+        self.ctx_generator = None;
+    }
 
-	pub fn extend_router(& mut self, router:Router){
-		self.extend_router = Some(RefCell::new(Some(router)));
-	}
-	
-	pub fn rm_extend_router(& mut self){
-		self.extend_router = None;
-	}
+    pub fn gen_tera_builder(&self) -> TeraBuilder {
+        TeraBuilder::new(
+            format!("{}/**/*", self.tmpl_dir_name),
+            self.tmpl_func_map.clone(),
+            self.tmpl_filter_map.clone(),
+            self.ctx_generator.clone(),
+        )
+    }
 
-    pub async fn serve(&self) {
+    pub async fn serve(&self, extend_router: Option<Router>) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
                 StaticDir::new([&self.pub_assets_dir_name])
                     .defaults("index.html")
                     .listing(true),
             );
-        let view_router = Router::with_path("/<**rest_path>").get(ViewHandler::new(
-            format!("{}/**/*", self.tmpl_dir_name),
-            self.tmpl_func_map.clone(),
-            self.tmpl_filter_map.clone(),
-            self.request_meta_info_collector.clone(),
-        ));
-        let router = Router::new().push(pub_assets_router);
-		let extend_router = match self.extend_router{
-			Some(ref cell)=>{
-				cell.borrow_mut().take()
-			}
-			None=>{
-				None
-			}
-		};
-		let router = match extend_router{
-			Some(r)=>{
-				router.push(r)
-			}
-			None=>{
-				router
-			}
-		};
-		let router = router.push(view_router);
+        let view_router =
+            Router::with_path("/<**rest_path>").get(ViewHandler::new(self.gen_tera_builder()));
+        let router = Router::new();
+
+        let router = match extend_router {
+            Some(r) => router.push(r),
+            None => router,
+        };
+        let router = router.push(pub_assets_router);
+        let router = router.push(view_router);
         let acceptor = TcpListener::new(&self.host).bind().await;
-        Server::new(acceptor)
-            .serve(router)
-            .await
+        Server::new(acceptor).serve(router).await
+    }
+}
+
+pub struct TeraBuilder {
+    tpl_dir: String,
+    tpl_funcs: TeraFunctionMap,
+    tpl_filters: TeraFilterMap,
+    ctx_generator: MetaInfoCollector,
+}
+impl TeraBuilder {
+    pub fn new(
+        tpl_dir: String,
+        tpl_funcs: TeraFunctionMap,
+        tpl_filters: TeraFilterMap,
+        ctx_generator: MetaInfoCollector,
+    ) -> Self {
+        Self {
+            tpl_dir,
+            tpl_funcs,
+            tpl_filters,
+            ctx_generator,
+        }
+    }
+
+    fn register_utilities(&self, tera: &mut Tera) {
+        for (k, v) in &self.tpl_funcs {
+            tera.register_function(k, CallableObjectForTera(Arc::clone(v)));
+        }
+        for (k, v) in &self.tpl_filters {
+            tera.register_filter(k, CallableObjectForTera(Arc::clone(v)));
+        }
+    }
+
+    pub fn build(&self, ctx: Context) -> tera::Result<Tera> {
+        let mut tera = Tera::new(&self.tpl_dir)?;
+        self.register_utilities(&mut tera);
+        tera.register_filter(
+            "json_decode",
+            |v: &Value, _args: &HashMap<String, Value>| -> Result<Value> {
+                let v = v
+                    .as_str()
+                    .ok_or(tera::Error::msg("value must be a json object string"))?;
+                let v = serde_json::from_str::<Value>(v)?;
+                Ok(v)
+            },
+        );
+        tera.register_function("include_file", generate_include(tera.clone(), ctx));
+        Ok(tera)
+    }
+
+    pub fn gen_context(&self, req: &Request) -> Context {
+        match self.ctx_generator {
+            Some(ref collect) => {
+                let mut context = Context::new();
+                for (k, val) in collect(req) {
+                    context.insert(k, &val);
+                }
+                context
+            }
+            None => Context::default(),
+        }
     }
 }
 
 struct ViewHandler {
-    dir_path: String,
-    tmpl_func_map: TeraFunctionMap,
-    tmpl_filter_map: TeraFilterMap,
-    request_meta_info_collector: MetaInfoCollector,
+    tera_builder: TeraBuilder,
 }
 impl ViewHandler {
-    fn new(
-        v: String,
-        tmp_func: TeraFunctionMap,
-        filter_map: TeraFilterMap,
-        collector: MetaInfoCollector,
-    ) -> Self {
-        Self {
-            dir_path: v,
-            tmpl_func_map: tmp_func,
-            tmpl_filter_map: filter_map,
-            request_meta_info_collector: collector,
-        }
-    }
-    fn register_with_tera(&self, tera: &mut Tera) {
-        for (k, v) in &self.tmpl_func_map {
-            tera.register_function(k, CallableObjectForTera(Arc::clone(v)));
-        }
-        for (k, v) in &self.tmpl_filter_map {
-            tera.register_filter(k, CallableObjectForTera(Arc::clone(v)));
-        }
-    }
-    fn gen_context(&self, req:&Request) -> Context {
-        match self.request_meta_info_collector {
-            Some(ref collect) => {
-				let mut context = Context::new();
-				for (k,val) in collect(req){
-					context.insert(k, &val);
-				}
-				context
-			}
-            None => {
-				Context::default()
-			}
-        }
+    fn new(tera_builder: TeraBuilder) -> Self {
+        Self { tera_builder }
     }
 }
 #[handler]
@@ -187,25 +207,10 @@ impl ViewHandler {
 			res.render(Text::Plain("invalid request path"));
 			return;
 		};
-        match Tera::new(&self.dir_path) {
-            Ok(mut tera) => {
-				let context = self.gen_context(req);
-				self.register_with_tera(&mut tera);
-                tera.register_filter(
-                    "json_decode",
-                    |v: &Value, _args: &HashMap<String, Value>| -> Result<Value> {
-                        let v = v
-                            .as_str()
-                            .ok_or(tera::Error::msg("value must be a json object string"))?;
-                        let v = serde_json::from_str::<Value>(v)?;
-                        Ok(v)
-                    },
-                );
-				tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
-                match tera.render(
-                    if path.is_empty() { "index.html" } else { &path },
-                    &context,
-                ) {
+        let ctx = self.tera_builder.gen_context(req);
+        match self.tera_builder.build(ctx.clone()) {
+            Ok(tera) => {
+                match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
                     Ok(s) => {
                         res.render(Text::Html(s));
                     }
@@ -223,7 +228,7 @@ impl ViewHandler {
     }
 }
 
-fn generate_include(tera: Tera, parent:Context) -> impl Function {
+fn generate_include(tera: Tera, parent: Context) -> impl Function {
     move |args: &HashMap<String, Value>| -> Result<Value> {
         let Some(file_path) = args.get("path") else{
             return Err(tera::Error::msg("file does not exist in the template path"));
@@ -237,8 +242,11 @@ fn generate_include(tera: Tera, parent:Context) -> impl Function {
                 let v = serde_json::from_str::<Value>(context_value)?;
                 let mut context = Context::from_value(serde_json::json!({ "context": v }))?;
                 let mut tera = tera.clone();
-				context.insert("__Parent", &parent.clone().into_json());
-                tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
+                context.insert("__Parent", &parent.clone().into_json());
+                tera.register_function(
+                    "include_file",
+                    generate_include(tera.clone(), context.clone()),
+                );
                 let r = tera
                     .render(
                         file_path
@@ -250,10 +258,14 @@ fn generate_include(tera: Tera, parent:Context) -> impl Function {
                 return Ok(Value::String(r));
             }
             None => {
-                let mut context = Context::from_value(serde_json::json!({ "context": Value::Null }))?;
+                let mut context =
+                    Context::from_value(serde_json::json!({ "context": Value::Null }))?;
                 let mut tera = tera.clone();
-				context.insert("__Parent", &parent.clone().into_json());
-                tera.register_function("include_file", generate_include(tera.clone(),context.clone()));
+                context.insert("__Parent", &parent.clone().into_json());
+                tera.register_function(
+                    "include_file",
+                    generate_include(tera.clone(), context.clone()),
+                );
                 let r = tera
                     .render(
                         file_path
