@@ -112,7 +112,6 @@ impl SSRender {
             self.request_meta_info_collector.clone(),
         ));
         let router = Router::new().push(pub_assets_router);
-        let router = router.push(view_router);
 		let extend_router = match self.extend_router{
 			Some(ref cell)=>{
 				cell.borrow_mut().take()
@@ -129,6 +128,7 @@ impl SSRender {
 				router
 			}
 		};
+		let router = router.push(view_router);
         let acceptor = TcpListener::new(&self.host).bind().await;
         Server::new(acceptor)
             .serve(router)
