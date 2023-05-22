@@ -95,7 +95,7 @@ impl SSRender {
         self.ctx_generator = Some(Arc::new(f));
     }
 
-    pub fn rm_meta_info_collector(&mut self) {
+    pub fn rm_ctx_generator(&mut self) {
         self.ctx_generator = None;
     }
 
