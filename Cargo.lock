@@ -1598,8 +1598,9 @@ dependencies = [
 
 [[package]]
 name = "simple-ssr-rs"
-version = "0.1.600"
+version = "0.1.601"
 dependencies = [
+ "anyhow",
  "salvo",
  "serde_json",
  "tera",

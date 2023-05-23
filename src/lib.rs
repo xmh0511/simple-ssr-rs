@@ -5,6 +5,7 @@ pub use serde_json::{self, Value};
 use std::{collections::HashMap, sync::Arc};
 pub use tera::{self, Context, Filter, Function, Result, Tera};
 pub use tokio::{self};
+pub use anyhow;
 
 type TeraFunctionMap = HashMap<String, Arc<dyn Function + 'static>>;
 type TeraFilterMap = HashMap<String, Arc<dyn Filter + 'static>>;
