@@ -86,6 +86,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.71"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c7d0618f0e0b7e8ff11427422b64564d5fb0be1940354bfe2e0529b18a9d9b8"
+
+[[package]]
 name = "async-trait"
 version = "0.1.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1449,6 +1455,7 @@ version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "303a90f3e0205048a7d43a8b4e0ea8191659465fe0c738370424c2a0497777b3"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.21.0",
  "brotli",
@@ -1591,7 +1598,7 @@ dependencies = [
 
 [[package]]
 name = "simple-ssr-rs"
-version = "0.1.6"
+version = "0.1.600"
 dependencies = [
  "salvo",
  "serde_json",
