@@ -118,11 +118,11 @@ impl SSRender {
             );
         let view_router =
             Router::with_path("/<**rest_path>").get(ViewHandler::new(self.gen_tera_builder()));
-        let router = Router::new();
+        //let router = Router::new();
 
         let router = match extend_router {
-            Some(r) => router.push(r),
-            None => router,
+            Some(r) => r,
+            None => Router::new(),
         };
         let router = router.push(pub_assets_router);
         let router = router.push(view_router);
