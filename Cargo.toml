@@ -1,6 +1,6 @@
 [package]
 name = "simple-ssr-rs"
-version = "0.1.601"
+version = "0.1.602"
 edition = "2021"
 description = "A simple static web pages renderer on server-side"
 license = "MIT OR Apache-2.0"
