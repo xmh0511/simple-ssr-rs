@@ -40,7 +40,7 @@ fn main() {
       map.insert("info".to_owned(), Value::Bool(true));
       map
    });
-   //let router = Router::with_path("base");
+   //let router = Router::with_path("base");  // root path
    //let router = router.push(Router::with_path("hello").get(Hello(ssr.gen_tera_builder())));
    // ssr_work!(ssr,router);
    ssr_work!(ssr);
@@ -55,11 +55,13 @@ fn main() {
 	<h3>{{context.title}}</h3>
    <div>{{parent.info}}</div>  we can access the variable in the parent scope by using __Parent.info(if any), and so forth, __Parent...__Parent.info 
 -->
-<!-- the common directory is in the root path `pages` -->
+<!-- the common directory is in the root path `pages`, the following content is in the index.html -->
 <div>
 	{{ include_file(path="common/abc.html"), context=`{"title":"abc"}` | safe }}
 </div>
 ````
+
+Then we can access the website  on the browser: http://localhost:8080/ or http://localhost:8080/index.html. Access the static resource on browser: http://localhost:8080/assets/filename
 
 More details about how to use the template engine can be seen on the home page of [Tera](https://tera.netlify.app/docs/).
 
