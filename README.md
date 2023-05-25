@@ -40,7 +40,8 @@ fn main() {
       map.insert("info".to_owned(), Value::Bool(true));
       map
    });
-   //let router = Router::with_path("hello").get(Hello(ssr.gen_tera_builder()));
+   //let router = Router::with_path("base");
+   //let router = router.push(Router::with_path("hello").get(Hello(ssr.gen_tera_builder())));
    // ssr_work!(ssr,router);
    ssr_work!(ssr);
 }
