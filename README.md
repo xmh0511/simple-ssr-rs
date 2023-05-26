@@ -26,6 +26,14 @@ impl Hello{
   }
 }
 
+#[handler]
+async fn handle404(&self, _req: &Request, _depot: &Depot, res: &mut Response, ctrl: &mut FlowCtrl) {
+    if let Some(StatusCode::NOT_FOUND) = res.status_code {
+        res.render("Custom 404 Error Page");
+        ctrl.skip_rest();
+    }
+}
+
 fn main() {
    let mut ssr = SSRender::new("0.0.0.0:8080");
    ssr.set_pub_dir_name("assets");  // specify the name of the public assets directory in the current root directory
@@ -43,6 +51,8 @@ fn main() {
    //let router = Router::with_path("base");  // root path
    //let router = router.push(Router::with_path("hello").get(Hello(ssr.gen_tera_builder())));
    // ssr_work!(ssr,router);
+   // ssr_work!(ssr,None,Catcher::default().hoop(handle404));
+   // ssr_work!(ssr,router,Catcher::default().hoop(handle404));
    ssr_work!(ssr);
 }
 
