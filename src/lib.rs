@@ -1,11 +1,12 @@
+pub use anyhow;
 pub use salvo;
+pub use salvo::catcher::Catcher;
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
 pub use serde_json::{self, Value};
-use std::{collections::HashMap, sync::Arc, marker::PhantomData};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 pub use tera::{self, Context, Filter, Function, Tera};
 pub use tokio::{self};
-pub use anyhow;
 
 type TeraFunctionMap = HashMap<String, Arc<dyn Function + 'static>>;
 type TeraFilterMap = HashMap<String, Arc<dyn Filter + 'static>>;
@@ -32,9 +33,11 @@ pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error
     tmpl_func_map: TeraFunctionMap,
     tmpl_filter_map: TeraFilterMap,
     ctx_generator: MetaInfoCollector,
-	phantom_data_:PhantomData<ErrorWriter>
+    phantom_data_: PhantomData<ErrorWriter>,
 }
-impl<ErrorWriter:Writer+ From<anyhow::Error> + From<tera::Error> + Send + Sync+'static> SSRender<ErrorWriter> {
+impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
+    SSRender<ErrorWriter>
+{
     pub fn new(host: &str) -> Self {
         Self {
             pub_assets_dir_name: "public".to_owned(),
@@ -43,7 +46,7 @@ impl<ErrorWriter:Writer+ From<anyhow::Error> + From<tera::Error> + Send + Sync+'
             tmpl_func_map: HashMap::new(),
             tmpl_filter_map: HashMap::new(),
             ctx_generator: None,
-			phantom_data_:PhantomData
+            phantom_data_: PhantomData,
         }
     }
 
@@ -111,15 +114,15 @@ impl<ErrorWriter:Writer+ From<anyhow::Error> + From<tera::Error> + Send + Sync+'
         )
     }
 
-    pub async fn serve(&self, extend_router: Option<Router>) {
+    pub async fn serve(&self, extend_router: Option<Router>, catcher: Option<Catcher>) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
                 StaticDir::new([&self.pub_assets_dir_name])
                     .defaults("index.html")
                     .listing(true),
             );
-        let view_router =
-            Router::with_path("/<**rest_path>").get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder()));
+        let view_router = Router::with_path("/<**rest_path>")
+            .get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder()));
         //let router = Router::new();
 
         let router = match extend_router {
@@ -129,7 +132,13 @@ impl<ErrorWriter:Writer+ From<anyhow::Error> + From<tera::Error> + Send + Sync+'
         let router = router.push(pub_assets_router);
         let router = router.push(view_router);
         let acceptor = TcpListener::new(&self.host).bind().await;
-        Server::new(acceptor).serve(router).await
+        match catcher {
+            Some(catcher) => {
+                let service = Service::new(router).catcher(catcher);
+                Server::new(acceptor).serve(service).await;
+            }
+            None => Server::new(acceptor).serve(router).await,
+        };
     }
 }
 
@@ -163,7 +172,7 @@ impl TeraBuilder {
         }
     }
 
-    pub fn build(&self, ctx: Context) -> tera::Result<(Tera,Context)> {
+    pub fn build(&self, ctx: Context) -> tera::Result<(Tera, Context)> {
         let mut tera = Tera::new(&self.tpl_dir)?;
         self.register_utilities(&mut tera);
         tera.register_filter(
@@ -177,7 +186,7 @@ impl TeraBuilder {
             },
         );
         tera.register_function("include_file", generate_include(tera.clone(), ctx.clone()));
-        Ok((tera,ctx))
+        Ok((tera, ctx))
     }
 
     pub fn gen_context(&self, req: &Request) -> Context {
@@ -194,26 +203,36 @@ impl TeraBuilder {
     }
 }
 
-struct ViewHandler<ErrorWriter:Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
+struct ViewHandler<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     tera_builder: TeraBuilder,
-	phantom_data_:PhantomData<ErrorWriter>
+    phantom_data_: PhantomData<ErrorWriter>,
 }
-impl<ErrorWriter:Writer  + From<anyhow::Error>+ From<tera::Error>> ViewHandler<ErrorWriter> {
+impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error>> ViewHandler<ErrorWriter> {
     fn new(tera_builder: TeraBuilder) -> Self {
-        Self { tera_builder, phantom_data_:PhantomData}
+        Self {
+            tera_builder,
+            phantom_data_: PhantomData,
+        }
     }
 }
 #[handler]
-impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static> ViewHandler<ErrorWriter> {
-    async fn handle(&self, req: &mut Request, _depot: &mut Depot, res: &mut Response)-> Result<(),ErrorWriter> {
+impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
+    ViewHandler<ErrorWriter>
+{
+    async fn handle(
+        &self,
+        req: &mut Request,
+        _depot: &mut Depot,
+        res: &mut Response,
+    ) -> Result<(), ErrorWriter> {
         let Some(path) = req.param::<String>("**rest_path") else{
 			res.status_code(StatusCode::BAD_REQUEST);
 			return Err(anyhow::format_err!("invalid request path").into());
 		};
         let ctx = self.tera_builder.gen_context(req);
-		let (tera,ctx) = self.tera_builder.build(ctx.clone())?;
-		let html = tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx)?;
-		res.render(Text::Html(html));
+        let (tera, ctx) = self.tera_builder.build(ctx.clone())?;
+        let html = tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx)?;
+        res.render(Text::Html(html));
         // match self.tera_builder.build(ctx.clone()) {
         //     Ok((tera,ctx)) => {
         //         match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
@@ -231,7 +250,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         //         res.render(Text::Plain(format!("{e:?}")));
         //     }
         // };
-	    Ok(())
+        Ok(())
     }
 }
 
@@ -287,24 +306,43 @@ fn generate_include(tera: Tera, parent: Context) -> impl Function {
     }
 }
 
+
 #[macro_export]
 macro_rules! ssr_work {
+    ($e:expr, None, $catcher:expr) => {
+        $crate::tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                $e.serve(None, Some($catcher)).await;
+            });
+    };
+    ($e:expr, $router:expr, $catcher:expr) => {
+        $crate::tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                $e.serve(Some($router), Some($catcher)).await;
+            });
+    };
     ($e:expr, $router:expr) => {
         $crate::tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
-                $e.serve(Some($router)).await;
+                $e.serve(Some($router), None).await;
             });
     };
-    ($e:expr)=>{
+    ($e:expr) => {
         $crate::tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            $e.serve(None).await;
-        });
-    }
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                $e.serve(None, None).await;
+            });
+    };
 }
