@@ -2,8 +2,8 @@ pub use salvo;
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
 pub use serde_json::{self, Value};
-use std::{collections::HashMap, sync::Arc};
-pub use tera::{self, Context, Filter, Function, Result, Tera};
+use std::{collections::HashMap, sync::Arc, marker::PhantomData};
+pub use tera::{self, Context, Filter, Function, Tera};
 pub use tokio::{self};
 pub use anyhow;
 
@@ -14,26 +14,27 @@ type MetaInfoCollector =
 struct CallableObjectForTera<F: ?Sized>(Arc<F>);
 
 impl<F: Function + ?Sized> Function for CallableObjectForTera<F> {
-    fn call(&self, args: &HashMap<String, Value>) -> Result<Value> {
+    fn call(&self, args: &HashMap<String, Value>) -> tera::Result<Value> {
         self.0.call(args)
     }
 }
 
 impl<F: Filter + ?Sized> Filter for CallableObjectForTera<F> {
-    fn filter(&self, value: &Value, args: &HashMap<String, Value>) -> Result<Value> {
+    fn filter(&self, value: &Value, args: &HashMap<String, Value>) -> tera::Result<Value> {
         self.0.filter(value, args)
     }
 }
 
-pub struct SSRender {
+pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     pub_assets_dir_name: String,
     tmpl_dir_name: String,
     host: String,
     tmpl_func_map: TeraFunctionMap,
     tmpl_filter_map: TeraFilterMap,
     ctx_generator: MetaInfoCollector,
+	phantom_data_:PhantomData<ErrorWriter>
 }
-impl SSRender {
+impl<ErrorWriter:Writer+ From<anyhow::Error> + From<tera::Error> + Send + Sync+'static> SSRender<ErrorWriter> {
     pub fn new(host: &str) -> Self {
         Self {
             pub_assets_dir_name: "public".to_owned(),
@@ -42,6 +43,7 @@ impl SSRender {
             tmpl_func_map: HashMap::new(),
             tmpl_filter_map: HashMap::new(),
             ctx_generator: None,
+			phantom_data_:PhantomData
         }
     }
 
@@ -117,7 +119,7 @@ impl SSRender {
                     .listing(true),
             );
         let view_router =
-            Router::with_path("/<**rest_path>").get(ViewHandler::new(self.gen_tera_builder()));
+            Router::with_path("/<**rest_path>").get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder()));
         //let router = Router::new();
 
         let router = match extend_router {
@@ -166,7 +168,7 @@ impl TeraBuilder {
         self.register_utilities(&mut tera);
         tera.register_filter(
             "json_decode",
-            |v: &Value, _args: &HashMap<String, Value>| -> Result<Value> {
+            |v: &Value, _args: &HashMap<String, Value>| -> tera::Result<Value> {
                 let v = v
                     .as_str()
                     .ok_or(tera::Error::msg("value must be a json object string"))?;
@@ -192,45 +194,49 @@ impl TeraBuilder {
     }
 }
 
-struct ViewHandler {
+struct ViewHandler<ErrorWriter:Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     tera_builder: TeraBuilder,
+	phantom_data_:PhantomData<ErrorWriter>
 }
-impl ViewHandler {
+impl<ErrorWriter:Writer  + From<anyhow::Error>+ From<tera::Error>> ViewHandler<ErrorWriter> {
     fn new(tera_builder: TeraBuilder) -> Self {
-        Self { tera_builder }
+        Self { tera_builder, phantom_data_:PhantomData}
     }
 }
 #[handler]
-impl ViewHandler {
-    async fn handle(&self, req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static> ViewHandler<ErrorWriter> {
+    async fn handle(&self, req: &mut Request, _depot: &mut Depot, res: &mut Response)-> Result<(),ErrorWriter> {
         let Some(path) = req.param::<String>("**rest_path") else{
 			res.status_code(StatusCode::BAD_REQUEST);
-			res.render(Text::Plain("invalid request path"));
-			return;
+			return Err(anyhow::format_err!("invalid request path").into());
 		};
         let ctx = self.tera_builder.gen_context(req);
-        match self.tera_builder.build(ctx.clone()) {
-            Ok((tera,ctx)) => {
-                match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
-                    Ok(s) => {
-                        res.render(Text::Html(s));
-                    }
-                    Err(e) => {
-                        res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Text::Plain(format!("{e:?}")));
-                    }
-                }
-            }
-            Err(e) => {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Text::Plain(format!("{e:?}")));
-            }
-        }
+		let (tera,ctx) = self.tera_builder.build(ctx.clone())?;
+		let html = tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx)?;
+		res.render(Text::Html(html));
+        // match self.tera_builder.build(ctx.clone()) {
+        //     Ok((tera,ctx)) => {
+        //         match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
+        //             Ok(s) => {
+        //                 res.render(Text::Html(s));
+        //             }
+        //             Err(e) => {
+        //                 res.status_code(StatusCode::BAD_REQUEST);
+        //                 res.render(Text::Plain(format!("{e:?}")));
+        //             }
+        //         }
+        //     }
+        //     Err(e) => {
+        //         res.status_code(StatusCode::BAD_REQUEST);
+        //         res.render(Text::Plain(format!("{e:?}")));
+        //     }
+        // };
+	    Ok(())
     }
 }
 
 fn generate_include(tera: Tera, parent: Context) -> impl Function {
-    move |args: &HashMap<String, Value>| -> Result<Value> {
+    move |args: &HashMap<String, Value>| -> tera::Result<Value> {
         let Some(file_path) = args.get("path") else{
             return Err(tera::Error::msg("file does not exist in the template path"));
         };
