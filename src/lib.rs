@@ -230,26 +230,29 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
 			return Err(anyhow::format_err!("invalid request path").into());
 		};
         let ctx = self.tera_builder.gen_context(req);
-        let (tera, ctx) = self.tera_builder.build(ctx.clone())?;
-        let html = tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx)?;
-        res.render(Text::Html(html));
-        // match self.tera_builder.build(ctx.clone()) {
-        //     Ok((tera,ctx)) => {
-        //         match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
-        //             Ok(s) => {
-        //                 res.render(Text::Html(s));
-        //             }
-        //             Err(e) => {
-        //                 res.status_code(StatusCode::BAD_REQUEST);
-        //                 res.render(Text::Plain(format!("{e:?}")));
-        //             }
-        //         }
-        //     }
-        //     Err(e) => {
-        //         res.status_code(StatusCode::BAD_REQUEST);
-        //         res.render(Text::Plain(format!("{e:?}")));
-        //     }
-        // };
+        if !cfg!(debug_assertions) {
+            let (tera, ctx) = self.tera_builder.build(ctx.clone())?;
+            let html = tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx)?;
+            res.render(Text::Html(html));
+        } else {
+            match self.tera_builder.build(ctx.clone()) {
+                Ok((tera, ctx)) => {
+                    match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
+                        Ok(s) => {
+                            res.render(Text::Html(s));
+                        }
+                        Err(e) => {
+                            res.status_code(StatusCode::BAD_REQUEST);
+							return Err(anyhow::format_err!("{e:?}").into());
+                        }
+                    }
+                }
+                Err(e) => {
+					res.status_code(StatusCode::BAD_REQUEST);
+					return Err(anyhow::format_err!("{e:?}").into());
+                }
+            };
+        }
         Ok(())
     }
 }
@@ -305,7 +308,6 @@ fn generate_include(tera: Tera, parent: Context) -> impl Function {
         }
     }
 }
-
 
 #[macro_export]
 macro_rules! ssr_work {
