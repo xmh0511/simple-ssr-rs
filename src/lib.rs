@@ -34,6 +34,7 @@ pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error
     tmpl_filter_map: TeraFilterMap,
     ctx_generator: MetaInfoCollector,
     phantom_data_: PhantomData<ErrorWriter>,
+	default_postfix:String
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
     SSRender<ErrorWriter>
@@ -47,6 +48,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             tmpl_filter_map: HashMap::new(),
             ctx_generator: None,
             phantom_data_: PhantomData,
+			default_postfix:"html".to_owned()
         }
     }
 
@@ -114,6 +116,14 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         )
     }
 
+	pub fn set_default_file_postfix(& mut self, postfix:&str){
+		self.default_postfix = postfix.to_owned();
+	}
+
+	pub fn default_file_postfix(&self)->&str{
+		&self.default_postfix
+	}
+
     pub async fn serve(&self, extend_router: Option<Router>, catcher: Option<Catcher>) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
@@ -122,7 +132,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
                     .listing(true),
             );
         let view_router = Router::with_path("/<**rest_path>")
-            .get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder()));
+            .get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder(),self.default_postfix.clone()));
         //let router = Router::new();
 
         let router = match extend_router {
@@ -206,12 +216,14 @@ impl TeraBuilder {
 struct ViewHandler<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     tera_builder: TeraBuilder,
     phantom_data_: PhantomData<ErrorWriter>,
+	default_postfix:String
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error>> ViewHandler<ErrorWriter> {
-    fn new(tera_builder: TeraBuilder) -> Self {
+    fn new(tera_builder: TeraBuilder,default_postfix:String) -> Self {
         Self {
             tera_builder,
             phantom_data_: PhantomData,
+			default_postfix
         }
     }
 }
@@ -230,19 +242,46 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
 			return Err(anyhow::format_err!("invalid request path").into());
 		};
         let ctx = self.tera_builder.gen_context(req);
+		let path = if path.is_empty(){
+			format!("index.{}",self.default_postfix)
+		}else{
+			match path.rfind("."){
+				Some(_)=>{
+					path
+				}
+				None=>{
+					format!("{path}.{}",self.default_postfix)
+				}
+			}
+		};
         if !cfg!(debug_assertions) {
             let (tera, ctx) = self.tera_builder.build(ctx.clone())?;
-            let html = tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx)?;
-            res.render(Text::Html(html));
+            match tera.render(&path, &ctx){
+				Ok(html)=>{
+					res.render(Text::Html(html));
+				}
+				Err(e)=>{
+					if let tera::ErrorKind::TemplateNotFound(_) = &e.kind{
+						res.status_code(StatusCode::NOT_FOUND);
+					}else{
+						res.status_code(StatusCode::BAD_REQUEST);
+					}
+					return Err(anyhow::format_err!("{}",e.to_string()).into());
+				}
+			};
         } else {
             match self.tera_builder.build(ctx.clone()) {
                 Ok((tera, ctx)) => {
-                    match tera.render(if path.is_empty() { "index.html" } else { &path }, &ctx) {
+                    match tera.render(&path, &ctx) {
                         Ok(s) => {
                             res.render(Text::Html(s));
                         }
                         Err(e) => {
-                            res.status_code(StatusCode::BAD_REQUEST);
+							if let tera::ErrorKind::TemplateNotFound(_) = &e.kind{
+								res.status_code(StatusCode::NOT_FOUND);
+							}else{
+								res.status_code(StatusCode::BAD_REQUEST);
+							}
 							return Err(anyhow::format_err!("{e:?}").into());
                         }
                     }
