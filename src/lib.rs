@@ -34,7 +34,10 @@ pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error
     tmpl_filter_map: TeraFilterMap,
     ctx_generator: MetaInfoCollector,
     phantom_data_: PhantomData<ErrorWriter>,
-	default_postfix:String
+	default_view_file_postfix:String,
+	default_view_file_name:String,
+	listing_assets:bool,
+	default_asset_filename:Option<String>,
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
     SSRender<ErrorWriter>
@@ -48,7 +51,10 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             tmpl_filter_map: HashMap::new(),
             ctx_generator: None,
             phantom_data_: PhantomData,
-			default_postfix:"html".to_owned()
+			default_view_file_postfix:"html".to_owned(),
+			default_view_file_name:"index.html".to_owned(),
+			listing_assets:true,
+			default_asset_filename:None,
         }
     }
 
@@ -117,22 +123,45 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
     }
 
 	pub fn set_default_file_postfix(& mut self, postfix:&str){
-		self.default_postfix = postfix.to_owned();
+		self.default_view_file_postfix = postfix.to_owned();
 	}
 
 	pub fn default_file_postfix(&self)->&str{
-		&self.default_postfix
+		&self.default_view_file_postfix
+	}
+
+	pub fn set_listing_assets(& mut self,v:bool){
+		self.listing_assets = v;
+	}
+
+	pub fn listing_assets(&self)->bool{
+		self.listing_assets 
+	}
+
+	pub fn set_default_assets_filename(& mut self,v:&str){
+		self.default_asset_filename = Some(v.to_owned());
+	}
+
+	pub fn default_assets_filename(&self)->&Option<String>{
+		&self.default_asset_filename
 	}
 
     pub async fn serve(&self, extend_router: Option<Router>, catcher: Option<Catcher>) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
                 StaticDir::new([&self.pub_assets_dir_name])
-                    .defaults("index.html")
-                    .listing(true),
+                    .defaults(match &self.default_asset_filename{
+						Some(v)=>{
+							vec![v.to_owned()]
+						}
+						None=>{
+							vec![]
+						}
+					})
+                    .listing(self.listing_assets),
             );
         let view_router = Router::with_path("/<**rest_path>")
-            .get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder(),self.default_postfix.clone()));
+            .get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder(),self.default_view_file_postfix.clone(),self.default_view_file_name.clone()));
         //let router = Router::new();
 
         let router = match extend_router {
@@ -216,14 +245,16 @@ impl TeraBuilder {
 struct ViewHandler<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     tera_builder: TeraBuilder,
     phantom_data_: PhantomData<ErrorWriter>,
-	default_postfix:String
+	default_postfix:String,
+	default_view_file_name:String
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error>> ViewHandler<ErrorWriter> {
-    fn new(tera_builder: TeraBuilder,default_postfix:String) -> Self {
+    fn new(tera_builder: TeraBuilder,default_postfix:String,default_view_file_name:String) -> Self {
         Self {
             tera_builder,
             phantom_data_: PhantomData,
-			default_postfix
+			default_postfix,
+			default_view_file_name
         }
     }
 }
@@ -243,7 +274,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
 		};
         let ctx = self.tera_builder.gen_context(req);
 		let path = if path.is_empty(){
-			format!("index.{}",self.default_postfix)
+			format!("{}",self.default_view_file_name)
 		}else{
 			match path.rfind("."){
 				Some(_)=>{
