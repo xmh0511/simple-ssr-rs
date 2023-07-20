@@ -1,6 +1,11 @@
 pub use anyhow;
 pub use salvo;
 pub use salvo::catcher::Catcher;
+#[cfg(feature = "http3")]
+use salvo::conn::tcp::TcpAcceptor;
+#[cfg(feature = "http3")]
+pub use salvo::conn::rustls::{Keycert, RustlsConfig};
+
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
 pub use serde_json::{self, Value};
@@ -26,6 +31,11 @@ impl<F: Filter + ?Sized> Filter for CallableObjectForTera<F> {
     }
 }
 
+pub struct Http3Certification {
+    pub cert: std::path::PathBuf,
+    pub key: std::path::PathBuf,
+}
+
 pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     pub_assets_dir_name: String,
     tmpl_dir_name: String,
@@ -34,10 +44,12 @@ pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error
     tmpl_filter_map: TeraFilterMap,
     ctx_generator: MetaInfoCollector,
     phantom_data_: PhantomData<ErrorWriter>,
-	default_view_file_postfix:String,
-	default_view_file_name:String,
-	listing_assets:bool,
-	default_asset_filename:Option<String>,
+    default_view_file_postfix: String,
+    default_view_file_name: String,
+    listing_assets: bool,
+    default_asset_filename: Option<String>,
+	#[cfg(feature = "http3")]
+    use_http3: Option<Http3Certification>,
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
     SSRender<ErrorWriter>
@@ -51,10 +63,12 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             tmpl_filter_map: HashMap::new(),
             ctx_generator: None,
             phantom_data_: PhantomData,
-			default_view_file_postfix:"html".to_owned(),
-			default_view_file_name:"index.html".to_owned(),
-			listing_assets:true,
-			default_asset_filename:None,
+            default_view_file_postfix: "html".to_owned(),
+            default_view_file_name: "index.html".to_owned(),
+            listing_assets: true,
+            default_asset_filename: None,
+			#[cfg(feature = "http3")]
+            use_http3: None,
         }
     }
 
@@ -122,46 +136,57 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         )
     }
 
-	pub fn set_default_file_postfix(& mut self, postfix:&str){
-		self.default_view_file_postfix = postfix.to_owned();
-	}
+    pub fn set_default_file_postfix(&mut self, postfix: &str) {
+        self.default_view_file_postfix = postfix.to_owned();
+    }
 
-	pub fn default_file_postfix(&self)->&str{
-		&self.default_view_file_postfix
-	}
+    pub fn default_file_postfix(&self) -> &str {
+        &self.default_view_file_postfix
+    }
 
-	pub fn set_listing_assets(& mut self,v:bool){
-		self.listing_assets = v;
-	}
+    pub fn set_listing_assets(&mut self, v: bool) {
+        self.listing_assets = v;
+    }
 
-	pub fn listing_assets(&self)->bool{
-		self.listing_assets 
-	}
+    pub fn listing_assets(&self) -> bool {
+        self.listing_assets
+    }
 
-	pub fn set_default_assets_filename(& mut self,v:&str){
-		self.default_asset_filename = Some(v.to_owned());
-	}
+    pub fn set_default_assets_filename(&mut self, v: &str) {
+        self.default_asset_filename = Some(v.to_owned());
+    }
 
-	pub fn default_assets_filename(&self)->&Option<String>{
-		&self.default_asset_filename
-	}
+    pub fn default_assets_filename(&self) -> &Option<String> {
+        &self.default_asset_filename
+    }
+	#[cfg(feature = "http3")]
+    pub fn set_use_http3(&mut self, cert: Http3Certification) {
+        self.use_http3 = Some(cert);
+    }
+	#[cfg(feature = "http3")]
+    pub fn use_http3(&self) -> Option<&Http3Certification> {
+        self.use_http3.as_ref()
+    }
 
     pub async fn serve(&self, extend_router: Option<Router>, catcher: Option<Catcher>) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
                 StaticDir::new([&self.pub_assets_dir_name])
-                    .defaults(match &self.default_asset_filename{
-						Some(v)=>{
-							vec![v.to_owned()]
-						}
-						None=>{
-							vec![]
-						}
-					})
+                    .defaults(match &self.default_asset_filename {
+                        Some(v) => {
+                            vec![v.to_owned()]
+                        }
+                        None => {
+                            vec![]
+                        }
+                    })
                     .listing(self.listing_assets),
             );
-        let view_router = Router::with_path("/<**rest_path>")
-            .get(ViewHandler::<ErrorWriter>::new(self.gen_tera_builder(),self.default_view_file_postfix.clone(),self.default_view_file_name.clone()));
+        let view_router = Router::with_path("/<**rest_path>").get(ViewHandler::<ErrorWriter>::new(
+            self.gen_tera_builder(),
+            self.default_view_file_postfix.clone(),
+            self.default_view_file_name.clone(),
+        ));
         //let router = Router::new();
 
         let router = match extend_router {
@@ -170,13 +195,70 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         };
         let router = router.push(pub_assets_router);
         let router = router.push(view_router);
-        let acceptor = TcpListener::new(&self.host).bind().await;
+		#[cfg(feature = "http3")]
+		enum VariantAcceptor<U>{
+			NonHttp3(TcpAcceptor),
+			Http3(U)
+		}
+
+		#[cfg(feature = "http3")]{
+			let var_acceptor = match self.use_http3.as_ref() {
+				Some(cert) => {
+					let cert_bytes = tokio::fs::read(&cert.cert).await.unwrap();
+					let key_bytes = tokio::fs::read(&cert.key).await.unwrap();
+					let config = RustlsConfig::new(
+						Keycert::new()
+							.cert(cert_bytes.as_slice())
+							.key(key_bytes.as_slice()),
+					);
+					let listener = TcpListener::new(self.host.clone()).rustls(config.clone());
+					let acceptor = QuinnListener::new(config, ("127.0.0.1", 5800))
+						.join(listener)
+						.bind()
+						.await;
+					VariantAcceptor::Http3(acceptor)
+				}
+				None => {
+					let acceptor = TcpListener::new(&self.host).bind().await;
+					VariantAcceptor::NonHttp3(acceptor)
+				}
+			};
+		}
+
         match catcher {
             Some(catcher) => {
                 let service = Service::new(router).catcher(catcher);
-                Server::new(acceptor).serve(service).await;
+				#[cfg(feature = "http3")]{
+					match var_acceptor{
+						VariantAcceptor::Http3(acceptor)=>{
+							Server::new(acceptor).serve(service).await;
+						}
+						VariantAcceptor::NonHttp3(acceptor)=>{
+							Server::new(acceptor).serve(service).await;
+						}
+					}
+				}
+				#[cfg(not(feature = "http3"))]{
+					let acceptor = TcpListener::new(&self.host).bind().await;
+					Server::new(acceptor).serve(service).await;
+				}
             }
-            None => Server::new(acceptor).serve(router).await,
+			None =>{
+				#[cfg(feature = "http3")]{
+					match var_acceptor{
+						VariantAcceptor::Http3(acceptor)=>{
+							Server::new(acceptor).serve(router).await;
+						}
+						VariantAcceptor::NonHttp3(acceptor)=>{
+							Server::new(acceptor).serve(router).await;
+						}
+					}
+				}
+				#[cfg(not(feature = "http3"))]{
+					let acceptor = TcpListener::new(&self.host).bind().await;
+					Server::new(acceptor).serve(router).await;
+				}
+			}
         };
     }
 }
@@ -245,16 +327,20 @@ impl TeraBuilder {
 struct ViewHandler<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> = anyhow::Error> {
     tera_builder: TeraBuilder,
     phantom_data_: PhantomData<ErrorWriter>,
-	default_postfix:String,
-	default_view_file_name:String
+    default_postfix: String,
+    default_view_file_name: String,
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error>> ViewHandler<ErrorWriter> {
-    fn new(tera_builder: TeraBuilder,default_postfix:String,default_view_file_name:String) -> Self {
+    fn new(
+        tera_builder: TeraBuilder,
+        default_postfix: String,
+        default_view_file_name: String,
+    ) -> Self {
         Self {
             tera_builder,
             phantom_data_: PhantomData,
-			default_postfix,
-			default_view_file_name
+            default_postfix,
+            default_view_file_name,
         }
     }
 }
@@ -273,53 +359,49 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
 			return Err(anyhow::format_err!("invalid request path").into());
 		};
         let ctx = self.tera_builder.gen_context(req);
-		let path = if path.is_empty(){
-			format!("{}",self.default_view_file_name)
-		}else{
-			match path.rfind("."){
-				Some(_)=>{
-					path
-				}
-				None=>{
-					format!("{path}.{}",self.default_postfix)
-				}
-			}
-		};
+        let path = if path.is_empty() {
+            format!("{}", self.default_view_file_name)
+        } else {
+            match path.rfind(".") {
+                Some(_) => path,
+                None => {
+                    format!("{path}.{}", self.default_postfix)
+                }
+            }
+        };
         if !cfg!(debug_assertions) {
             let (tera, ctx) = self.tera_builder.build(ctx.clone())?;
-            match tera.render(&path, &ctx){
-				Ok(html)=>{
-					res.render(Text::Html(html));
-				}
-				Err(e)=>{
-					if let tera::ErrorKind::TemplateNotFound(_) = &e.kind{
-						res.status_code(StatusCode::NOT_FOUND);
-					}else{
-						res.status_code(StatusCode::BAD_REQUEST);
-					}
-					return Err(anyhow::format_err!("{}",e.to_string()).into());
-				}
-			};
-        } else {
-            match self.tera_builder.build(ctx.clone()) {
-                Ok((tera, ctx)) => {
-                    match tera.render(&path, &ctx) {
-                        Ok(s) => {
-                            res.render(Text::Html(s));
-                        }
-                        Err(e) => {
-							if let tera::ErrorKind::TemplateNotFound(_) = &e.kind{
-								res.status_code(StatusCode::NOT_FOUND);
-							}else{
-								res.status_code(StatusCode::BAD_REQUEST);
-							}
-							return Err(anyhow::format_err!("{e:?}").into());
-                        }
-                    }
+            match tera.render(&path, &ctx) {
+                Ok(html) => {
+                    res.render(Text::Html(html));
                 }
                 Err(e) => {
-					res.status_code(StatusCode::BAD_REQUEST);
-					return Err(anyhow::format_err!("{e:?}").into());
+                    if let tera::ErrorKind::TemplateNotFound(_) = &e.kind {
+                        res.status_code(StatusCode::NOT_FOUND);
+                    } else {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                    }
+                    return Err(anyhow::format_err!("{}", e.to_string()).into());
+                }
+            };
+        } else {
+            match self.tera_builder.build(ctx.clone()) {
+                Ok((tera, ctx)) => match tera.render(&path, &ctx) {
+                    Ok(s) => {
+                        res.render(Text::Html(s));
+                    }
+                    Err(e) => {
+                        if let tera::ErrorKind::TemplateNotFound(_) = &e.kind {
+                            res.status_code(StatusCode::NOT_FOUND);
+                        } else {
+                            res.status_code(StatusCode::BAD_REQUEST);
+                        }
+                        return Err(anyhow::format_err!("{e:?}").into());
+                    }
+                },
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    return Err(anyhow::format_err!("{e:?}").into());
                 }
             };
         }
