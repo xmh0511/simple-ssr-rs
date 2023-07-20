@@ -2,9 +2,9 @@ pub use anyhow;
 pub use salvo;
 pub use salvo::catcher::Catcher;
 #[cfg(feature = "http3")]
-use salvo::conn::tcp::TcpAcceptor;
-#[cfg(feature = "http3")]
 pub use salvo::conn::rustls::{Keycert, RustlsConfig};
+#[cfg(feature = "http3")]
+use salvo::conn::tcp::TcpAcceptor;
 
 use salvo::prelude::*;
 use salvo::serve_static::StaticDir;
@@ -48,7 +48,7 @@ pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error
     default_view_file_name: String,
     listing_assets: bool,
     default_asset_filename: Option<String>,
-	#[cfg(feature = "http3")]
+    #[cfg(feature = "http3")]
     use_http3: Option<Http3Certification>,
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
@@ -67,7 +67,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             default_view_file_name: "index.html".to_owned(),
             listing_assets: true,
             default_asset_filename: None,
-			#[cfg(feature = "http3")]
+            #[cfg(feature = "http3")]
             use_http3: None,
         }
     }
@@ -159,11 +159,11 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
     pub fn default_assets_filename(&self) -> &Option<String> {
         &self.default_asset_filename
     }
-	#[cfg(feature = "http3")]
+    #[cfg(feature = "http3")]
     pub fn set_use_http3(&mut self, cert: Http3Certification) {
         self.use_http3 = Some(cert);
     }
-	#[cfg(feature = "http3")]
+    #[cfg(feature = "http3")]
     pub fn use_http3(&self) -> Option<&Http3Certification> {
         self.use_http3.as_ref()
     }
@@ -195,70 +195,73 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         };
         let router = router.push(pub_assets_router);
         let router = router.push(view_router);
-		#[cfg(feature = "http3")]
-		enum VariantAcceptor<U>{
-			NonHttp3(TcpAcceptor),
-			Http3(U)
-		}
+        #[cfg(feature = "http3")]
+        enum VariantAcceptor<U> {
+            NonHttp3(TcpAcceptor),
+            Http3(U),
+        }
 
-		#[cfg(feature = "http3")]{
-			let var_acceptor = match self.use_http3.as_ref() {
-				Some(cert) => {
-					let cert_bytes = tokio::fs::read(&cert.cert).await.unwrap();
-					let key_bytes = tokio::fs::read(&cert.key).await.unwrap();
-					let config = RustlsConfig::new(
-						Keycert::new()
-							.cert(cert_bytes.as_slice())
-							.key(key_bytes.as_slice()),
-					);
-					let listener = TcpListener::new(self.host.clone()).rustls(config.clone());
-					let acceptor = QuinnListener::new(config, ("127.0.0.1", 5800))
-						.join(listener)
-						.bind()
-						.await;
-					VariantAcceptor::Http3(acceptor)
-				}
-				None => {
-					let acceptor = TcpListener::new(&self.host).bind().await;
-					VariantAcceptor::NonHttp3(acceptor)
-				}
-			};
-		}
+        #[cfg(feature = "http3")]
+        let var_acceptor = match self.use_http3.as_ref() {
+            Some(cert) => {
+                let cert_bytes = tokio::fs::read(&cert.cert).await.unwrap();
+                let key_bytes = tokio::fs::read(&cert.key).await.unwrap();
+                let config = RustlsConfig::new(
+                    Keycert::new()
+                        .cert(cert_bytes.as_slice())
+                        .key(key_bytes.as_slice()),
+                );
+                let listener = TcpListener::new(self.host.clone()).rustls(config.clone());
+                let acceptor = QuinnListener::new(config, ("127.0.0.1", 5800))
+                    .join(listener)
+                    .bind()
+                    .await;
+                VariantAcceptor::Http3(acceptor)
+            }
+            None => {
+                let acceptor = TcpListener::new(&self.host).bind().await;
+                VariantAcceptor::NonHttp3(acceptor)
+            }
+        };
 
         match catcher {
             Some(catcher) => {
                 let service = Service::new(router).catcher(catcher);
-				#[cfg(feature = "http3")]{
-					match var_acceptor{
-						VariantAcceptor::Http3(acceptor)=>{
-							Server::new(acceptor).serve(service).await;
-						}
-						VariantAcceptor::NonHttp3(acceptor)=>{
-							Server::new(acceptor).serve(service).await;
-						}
-					}
-				}
-				#[cfg(not(feature = "http3"))]{
-					let acceptor = TcpListener::new(&self.host).bind().await;
-					Server::new(acceptor).serve(service).await;
-				}
+                #[cfg(feature = "http3")]
+                {
+                    match var_acceptor {
+                        VariantAcceptor::Http3(acceptor) => {
+                            Server::new(acceptor).serve(service).await;
+                        }
+                        VariantAcceptor::NonHttp3(acceptor) => {
+                            Server::new(acceptor).serve(service).await;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "http3"))]
+                {
+                    let acceptor = TcpListener::new(&self.host).bind().await;
+                    Server::new(acceptor).serve(service).await;
+                }
             }
-			None =>{
-				#[cfg(feature = "http3")]{
-					match var_acceptor{
-						VariantAcceptor::Http3(acceptor)=>{
-							Server::new(acceptor).serve(router).await;
-						}
-						VariantAcceptor::NonHttp3(acceptor)=>{
-							Server::new(acceptor).serve(router).await;
-						}
-					}
-				}
-				#[cfg(not(feature = "http3"))]{
-					let acceptor = TcpListener::new(&self.host).bind().await;
-					Server::new(acceptor).serve(router).await;
-				}
-			}
+            None => {
+                #[cfg(feature = "http3")]
+                {
+                    match var_acceptor {
+                        VariantAcceptor::Http3(acceptor) => {
+                            Server::new(acceptor).serve(router).await;
+                        }
+                        VariantAcceptor::NonHttp3(acceptor) => {
+                            Server::new(acceptor).serve(router).await;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "http3"))]
+                {
+                    let acceptor = TcpListener::new(&self.host).bind().await;
+                    Server::new(acceptor).serve(router).await;
+                }
+            }
         };
     }
 }
