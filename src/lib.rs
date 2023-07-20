@@ -212,7 +212,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
                         .key(key_bytes.as_slice()),
                 );
                 let listener = TcpListener::new(self.host.clone()).rustls(config.clone());
-                let acceptor = QuinnListener::new(config, ("127.0.0.1", 5800))
+                let acceptor = QuinnListener::new(config, self.host.clone())
                     .join(listener)
                     .bind()
                     .await;
