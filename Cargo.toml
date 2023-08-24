@@ -1,6 +1,6 @@
 [package]
 name = "simple-ssr-rs"
-version = "0.1.610"
+version = "0.1.612"
 edition = "2021"
 description = "A simple static web pages renderer on server-side"
 license = "MIT OR Apache-2.0"
@@ -10,8 +10,8 @@ homepage = "https://github.com/xmh0511/simple-ssr-rs.git"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.29.1", features = ["macros"] }
-salvo = {version="0.48.2", features=["serve-static","anyhow"]}
+tokio = { version = "1.32.0", features = ["macros"] }
+salvo = {version="0.51.0", features=["serve-static","anyhow"]}
 tera = "1.19.0"
 serde_json = "1.0.103"
 anyhow="1.0.72"
