@@ -48,6 +48,7 @@ fn main() {
       map.insert("info".to_owned(), Value::Bool(true));
       map
    });
+   // ssr.set_hook_view_path(Some(|req,path|{ path})); // modify the path before rendering it by view-engine
    //let router = Router::with_path("base");  // root path
    //let router = router.push(Router::with_path("hello").get(Hello(ssr.gen_tera_builder())));
    // ssr_work!(ssr,router);

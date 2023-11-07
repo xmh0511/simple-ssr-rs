@@ -17,6 +17,8 @@ type TeraFunctionMap = HashMap<String, Arc<dyn Function + 'static>>;
 type TeraFilterMap = HashMap<String, Arc<dyn Filter + 'static>>;
 type MetaInfoCollector =
     Option<Arc<dyn Fn(&Request) -> HashMap<String, Value> + 'static + Send + Sync>>;
+
+type HookViewPathHandlerType = Option<Arc<dyn Fn(& mut Request, String) -> String + Send + Sync>>;
 struct CallableObjectForTera<F: ?Sized>(Arc<F>);
 
 impl<F: Function + ?Sized> Function for CallableObjectForTera<F> {
@@ -50,6 +52,7 @@ pub struct SSRender<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error
     default_asset_filename: Option<String>,
     #[cfg(feature = "http3")]
     use_http3: Option<Http3Certification>,
+    hook_view_path: HookViewPathHandlerType,
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync + 'static>
     SSRender<ErrorWriter>
@@ -69,6 +72,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             default_asset_filename: None,
             #[cfg(feature = "http3")]
             use_http3: None,
+            hook_view_path: None,
         }
     }
 
@@ -168,6 +172,24 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         self.use_http3.as_ref()
     }
 
+    pub fn set_hook_view_path<F: Fn(& mut Request, String) -> String + 'static + Send + Sync>(
+        &mut self,
+        hook: Option<F>,
+    ) {
+        match hook {
+            Some(f) => {
+                self.hook_view_path = Some(Arc::new(f));
+            }
+            None => {
+                self.hook_view_path = None;
+            }
+        }
+    }
+
+    pub fn hook_view_path(&self) -> &HookViewPathHandlerType {
+        &self.hook_view_path
+    }
+
     pub async fn serve(&self, extend_router: Option<Router>, catcher: Option<Catcher>) {
         let pub_assets_router = Router::with_path(format!("{}/<**>", self.pub_assets_dir_name))
             .get(
@@ -186,6 +208,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             self.gen_tera_builder(),
             self.default_view_file_postfix.clone(),
             self.default_view_file_name.clone(),
+            self.hook_view_path.clone(),
         ));
         //let router = Router::new();
 
@@ -332,18 +355,21 @@ struct ViewHandler<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error>
     phantom_data_: PhantomData<ErrorWriter>,
     default_postfix: String,
     default_view_file_name: String,
+    hook_view_path: HookViewPathHandlerType,
 }
 impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error>> ViewHandler<ErrorWriter> {
     fn new(
         tera_builder: TeraBuilder,
         default_postfix: String,
         default_view_file_name: String,
+        hook_view_path: HookViewPathHandlerType,
     ) -> Self {
         Self {
             tera_builder,
             phantom_data_: PhantomData,
             default_postfix,
             default_view_file_name,
+            hook_view_path,
         }
     }
 }
@@ -357,10 +383,10 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         _depot: &mut Depot,
         res: &mut Response,
     ) -> Result<(), ErrorWriter> {
-        let Some(path) = req.param::<String>("**rest_path") else{
-			res.status_code(StatusCode::BAD_REQUEST);
-			return Err(anyhow::format_err!("invalid request path").into());
-		};
+        let Some(path) = req.param::<String>("**rest_path") else {
+            res.status_code(StatusCode::BAD_REQUEST);
+            return Err(anyhow::format_err!("invalid request path").into());
+        };
         let ctx = self.tera_builder.gen_context(req);
         let path = if path.is_empty() {
             format!("{}", self.default_view_file_name)
@@ -371,6 +397,10 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
                     format!("{path}.{}", self.default_postfix)
                 }
             }
+        };
+        let path = match &self.hook_view_path {
+            Some(f) => f(& mut *req, path),
+            None => path,
         };
         if !cfg!(debug_assertions) {
             let (tera, ctx) = self.tera_builder.build(ctx.clone())?;
@@ -414,7 +444,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
 
 fn generate_include(tera: Tera, parent: Context) -> impl Function {
     move |args: &HashMap<String, Value>| -> tera::Result<Value> {
-        let Some(file_path) = args.get("path") else{
+        let Some(file_path) = args.get("path") else {
             return Err(tera::Error::msg("file does not exist in the template path"));
         };
         match args.get("context") {
