@@ -18,7 +18,7 @@ type TeraFilterMap = HashMap<String, Arc<dyn Filter + 'static>>;
 type MetaInfoCollector =
     Option<Arc<dyn Fn(&Request) -> HashMap<String, Value> + 'static + Send + Sync>>;
 
-type HookViewPathHandlerType = Option<Arc<dyn Fn(& mut Request, String) -> String + Send + Sync>>;
+type HookViewPathHandlerType = Option<Arc<dyn Fn(&mut Request, String) -> String + Send + Sync>>;
 struct CallableObjectForTera<F: ?Sized>(Arc<F>);
 
 impl<F: Function + ?Sized> Function for CallableObjectForTera<F> {
@@ -172,7 +172,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         self.use_http3.as_ref()
     }
 
-    pub fn set_hook_view_path<F: Fn(& mut Request, String) -> String + 'static + Send + Sync>(
+    pub fn set_hook_view_path<F: Fn(&mut Request, String) -> String + 'static + Send + Sync>(
         &mut self,
         hook: Option<F>,
     ) {
@@ -202,7 +202,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
                             vec![]
                         }
                     })
-                    .listing(self.listing_assets),
+                    .auto_list(self.listing_assets),
             );
         let view_router = Router::with_path("/<**rest_path>").get(ViewHandler::<ErrorWriter>::new(
             self.gen_tera_builder(),
@@ -389,9 +389,9 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
         };
         let ctx = self.tera_builder.gen_context(req);
         let path = if path.is_empty() {
-            format!("{}", self.default_view_file_name)
+            self.default_view_file_name.to_string()
         } else {
-            match path.rfind(".") {
+            match path.rfind('.') {
                 Some(_) => path,
                 None => {
                     format!("{path}.{}", self.default_postfix)
@@ -399,7 +399,7 @@ impl<ErrorWriter: Writer + From<anyhow::Error> + From<tera::Error> + Send + Sync
             }
         };
         let path = match &self.hook_view_path {
-            Some(f) => f(& mut *req, path),
+            Some(f) => f(&mut *req, path),
             None => path,
         };
         if !cfg!(debug_assertions) {
@@ -469,7 +469,7 @@ fn generate_include(tera: Tera, parent: Context) -> impl Function {
                         &context,
                     )?
                     .to_string();
-                return Ok(Value::String(r));
+                Ok(Value::String(r))
             }
             None => {
                 let mut context =
