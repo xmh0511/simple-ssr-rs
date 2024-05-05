@@ -5,7 +5,7 @@ edition = "2021"
 description = "A simple static web pages renderer on server-side"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-homepage = "https://github.com/xmh0511/simple-ssr-rs.git"
+repository = "https://github.com/xmh0511/simple-ssr-rs.git"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
